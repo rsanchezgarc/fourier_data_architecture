@@ -7,15 +7,15 @@ Develop and evaluate scalable deep learning architectures that can effectively p
 ## 2. Data Specifications
 
 ### Input Data
-- **Type**: 3D volumetric objects (real-world or synthetic)
+- **Type**: 3D volumetric objects from ModelNet40 dataset
 - **Dimensions**: 64×64×64 voxels
-- **Transform**: Real FFT (rfft) to reduce memory footprint
-- **Perturbation**: Random corruption of both:
-  - Fourier amplitudes
-  - Fourier phases
+- **Transform**: Real FFT (rfft) to reduce memory footprint → 64×64×33 complex coefficients
+- **Perturbation**: Uniform random corruption:
+  - **Amplitude noise**: 10-30% uniform perturbation
+  - **Phase noise**: 0-π uniform perturbation
 
 ### Output Data
-- **Type**: Reconstructed 3D volume in real space
+- **Type**: Reconstructed 3D volume in real space (via inverse FFT)
 - **Evaluation**: Compare against ground truth original signal
 
 ## 3. Architecture Requirements
@@ -53,25 +53,34 @@ Develop and evaluate scalable deep learning architectures that can effectively p
 
 ## 5. Datasets
 
-### Options to Consider
-- [ ] **ShapeNet**: Large-scale 3D object dataset (synthetic)
-- [ ] **ModelNet**: 3D CAD models (synthetic)
-- [ ] **Medical imaging**: CT/MRI volumes (if available)
-- [ ] **Synthetic**: Generated geometric primitives
-- [ ] **Other**: [To be determined]
+### Primary Dataset: ModelNet40
+- **Size**: ~12,311 3D CAD models across 40 categories
+- **Download**: ~500MB compressed, ~2GB uncompressed
+- **Format**: OFF mesh files (will be voxelized to 64³)
+- **Split**: 9,843 training / 2,468 test
+- **Categories**: Airplane, car, chair, desk, lamp, plant, sofa, etc.
+- **Voxelization**: Using binvox or custom voxelizer
+
+### Alternative: ModelNet10
+- **Size**: 4,899 models across 10 categories
+- **Use case**: Faster prototyping and debugging
 
 ## 6. Architecture Candidates
 
-### Baseline Approaches
-1. **Fourier Image Transformer (FIT)** - Adapted for 3D with reduced tokens
-2. **Fourier Neural Operator (FNO)** - If applicable to this task
-3. **U-Net in Fourier Space** - CNN-based baseline
+See `ARCHITECTURE_PROPOSALS.md` for detailed designs. Summary:
 
-### Novel Scalable Approaches
-- [ ] Hierarchical Fourier tokenization
-- [ ] Frequency-band grouped processing
-- [ ] Sparse attention on important frequencies
-- [ ] Compressed/learned Fourier representations
+1. **Complex-Valued ResNet (CV-ResNet)** - Baseline, simple residual architecture
+2. **Frequency Shell CNN (FSC-Net)** ⭐ - Group by |k|, process shells with complex CNNs
+3. **Fourier Neural Operator (FNO-3D)** - Spectral convolutions in Fourier space
+4. **Multi-Resolution Fourier U-Net (MRFU-Net)** - Hierarchical frequency band processing
+5. **Radial-Angular Decomposition Network (RAD-Net)** - Spherical coordinate processing
+6. **Octave Fourier Network (OFN)** - Multi-rate frequency octave processing
+7. **Frequency-Grouped Transformer (FGT)** - Attention within/across frequency bands
+
+### Key Innovation: Frequency Shell Grouping
+- Group coefficients by |k| = √(kx² + ky² + kz²)
+- Process similar frequencies together
+- Natural multi-scale hierarchical structure
 
 ## 7. Implementation Phases
 
@@ -94,14 +103,36 @@ Develop and evaluate scalable deep learning architectures that can effectively p
 - [ ] Ablation studies
 - [ ] Performance analysis
 
-## 8. Questions to Resolve
+## 8. Technical Specifications
 
-1. **Perturbation strategy**: What noise levels? Gaussian, uniform, or other distributions?
-2. **Dataset**: Which 3D dataset should we prioritize?
-3. **Tokenization**: How should we group Fourier coefficients to reduce token count?
-4. **Training regime**: Batch size, epochs, learning rate schedule?
-5. **Hardware constraints**: Available GPU memory and compute?
+### Hardware
+- **GPUs**: 4× NVIDIA RTX 3090 (24GB VRAM each)
+- **Training**: DistributedDataParallel across GPUs
+- **Batch size**: 8-16 per GPU → 32-64 total
+- **Mixed precision**: FP16 with torch.cuda.amp
+
+### Framework
+- **PyTorch**: 2.0+ with native complex number support
+- **Additional libraries**:
+  - `trimesh` or `pyvista` for mesh loading
+  - `binvox` for voxelization
+  - `torch-complex` (if needed for complex layers)
+
+### Training Configuration
+- **Optimizer**: AdamW with cosine annealing
+- **Learning rate**: 1e-3 with warmup
+- **Epochs**: 50-100 (early stopping based on validation)
+- **Loss**: MSE in real space + optional Fourier space loss
 
 ---
 
-**Next Steps**: Review and refine these requirements, then begin with Phase 1 implementation.
+## 9. Open Questions
+
+1. **Rotation augmentation**: Should we augment with rotations before FFT?
+2. **Curriculum learning**: Start with easy noise → increase difficulty?
+3. **Synthetic warmstart**: Prototype on simple shapes (spheres, cubes) first?
+4. **Fourier space loss**: Should we add loss directly in frequency domain?
+
+---
+
+**Status**: Requirements finalized. Ready for implementation.
