@@ -354,19 +354,28 @@ class FrequencyGroupedTransformer(BaseFourierModel):
                 cross_processed[:, i]
             )  # [B, H', W', D', 2]
 
-            # Resize to match original band shape if needed
-            if band_reconstructed.shape[1:4] != (H, W, D // self.num_bands):
-                # Interpolate to correct size
+            # Get mask for this band
+            mask = self.band_masks[i]  # [H, W, D]
+
+            # Find the region covered by this band
+            band_region = mask.nonzero(as_tuple=False)
+            if len(band_region) == 0:
+                continue  # Empty band, skip
+
+            # For simplicity, resize to full volume dimensions and mask
+            # Interpolate to full size
+            if band_reconstructed.shape[1:4] != (H, W, D):
                 band_reconstructed = torch.nn.functional.interpolate(
                     band_reconstructed.permute(0, 4, 1, 2, 3),
-                    size=(H, W, D // self.num_bands),
+                    size=(H, W, D),
                     mode='trilinear',
+                    align_corners=False,
                 )
                 band_reconstructed = band_reconstructed.permute(0, 2, 3, 4, 1)
 
-            # Apply mask and add to output
-            mask = self.band_masks[i].unsqueeze(0).unsqueeze(-1)
-            output = output + band_reconstructed * mask
+            # Apply mask
+            mask_expanded = mask.unsqueeze(0).unsqueeze(-1)  # [1, H, W, D, 1]
+            output = output + band_reconstructed * mask_expanded
 
         return output
 
