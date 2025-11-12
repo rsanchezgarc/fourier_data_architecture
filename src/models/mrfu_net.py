@@ -92,6 +92,36 @@ class FrequencyBandUNet(nn.Module):
         imag = self.pool(x[..., 1])
         return torch.stack([real, imag], dim=-1)
 
+    def _match_size(self, x: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """
+        Match spatial dimensions of x to target by cropping or padding.
+
+        Args:
+            x: Tensor to resize [B, C, H, W, D, 2]
+            target: Target tensor with desired spatial dims [B, C, H', W', D', 2]
+
+        Returns:
+            x resized to match target spatial dimensions
+        """
+        # Get spatial dimensions
+        _, _, h_x, w_x, d_x, _ = x.shape
+        _, _, h_t, w_t, d_t, _ = target.shape
+
+        # Crop or pad to match
+        if h_x != h_t or w_x != w_t or d_x != d_t:
+            # Use interpolation for simplicity
+            x_interp = torch.nn.functional.interpolate(
+                x.permute(0, 1, 5, 2, 3, 4).reshape(-1, 2, h_x, w_x, d_x),  # [B*C, 2, H, W, D]
+                size=(h_t, w_t, d_t),
+                mode='trilinear',
+                align_corners=False,
+            )
+            # Reshape back
+            B, C = x.shape[:2]
+            x = x_interp.reshape(B, C, 2, h_t, w_t, d_t).permute(0, 1, 3, 4, 5, 2)
+
+        return x
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
@@ -131,6 +161,8 @@ class FrequencyBandUNet(nn.Module):
         # Decoder with skip connections
         if self.num_pools >= 3:
             up3 = self.up3(bottleneck_out)
+            # Match spatial dimensions before concatenation
+            up3 = self._match_size(up3, enc3_out)
             dec3_in = torch.cat([up3, enc3_out], dim=1)
             dec3_out = self.dec3(dec3_in)
         else:
@@ -138,6 +170,8 @@ class FrequencyBandUNet(nn.Module):
 
         if self.num_pools >= 2:
             up2 = self.up2(dec3_out)
+            # Match spatial dimensions before concatenation
+            up2 = self._match_size(up2, enc2_out)
             dec2_in = torch.cat([up2, enc2_out], dim=1)
             dec2_out = self.dec2(dec2_in)
         else:
@@ -145,6 +179,8 @@ class FrequencyBandUNet(nn.Module):
 
         if self.num_pools >= 1:
             up1 = self.up1(dec2_out)
+            # Match spatial dimensions before concatenation
+            up1 = self._match_size(up1, enc1_out)
             dec1_in = torch.cat([up1, enc1_out], dim=1)
             dec1_out = self.dec1(dec1_in)
         else:
