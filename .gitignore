@@ -44,7 +44,7 @@ checkpoints/
 *.pth
 *.pt
 
-# Data
-data/
+# Data (but not src/data code!)
+/data/
 *.npy
 *.npz
