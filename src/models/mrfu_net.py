@@ -317,19 +317,20 @@ class MRFUNet(BaseFourierModel):
         bottleneck_features = []
 
         for i, band in enumerate(bands):
-            # For cross-attention, we need bottleneck features
-            # For simplicity, we process entire U-Net here
-            # In a full implementation, you'd extract bottleneck separately
+            # Process each band through its U-Net
             band_out = self.band_unets[i](band)  # [B, 1, H, W, band_depth, 2]
             band_outputs.append(band_out)
 
             # Extract bottleneck features for cross-attention
-            # (This is a simplification - in practice, modify U-Net to return bottleneck)
-            # For now, we use the output as a proxy
-            bottleneck_feat = band_out.reshape(B, -1)  # Flatten
-            bottleneck_features.append(bottleneck_feat)
+            # Use adaptive pooling to ensure consistent feature dimensions across bands
+            # Pool spatial dimensions to fixed size
+            feat = torch.nn.functional.adaptive_avg_pool3d(
+                band_out.permute(0, 1, 5, 2, 3, 4).reshape(B, -1, H, W, band_out.shape[4]),
+                output_size=(1, 1, 1)
+            ).reshape(B, -1)
+            bottleneck_features.append(feat)
 
-        # Cross-band attention
+        # Cross-band attention (features now have consistent size)
         bottleneck_features = torch.stack(bottleneck_features, dim=1)  # [B, num_bands, feat_dim]
         attended_features = self.cross_band_attention(bottleneck_features)
 
