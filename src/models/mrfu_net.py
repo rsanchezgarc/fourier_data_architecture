@@ -41,8 +41,12 @@ class FrequencyBandUNet(nn.Module):
 
         self.pool = nn.MaxPool3d(kernel_size=2, stride=2)
 
-        # Bottleneck
-        bottleneck_ch = channels[min(self.num_pools + 1, len(channels) - 1)]
+        # Bottleneck - channel count must match the last encoder created
+        # If num_pools=0: input is enc1 (channels[1])
+        # If num_pools=1: input is enc1_pooled (channels[1])
+        # If num_pools=2: input is enc2_pooled (channels[2])
+        # If num_pools=3: input is enc3_pooled (channels[3])
+        bottleneck_ch = channels[max(1, self.num_pools)]
         self.bottleneck = ComplexConv3d(bottleneck_ch, bottleneck_ch, kernel_size=3, padding=1)
 
         # Decoder
