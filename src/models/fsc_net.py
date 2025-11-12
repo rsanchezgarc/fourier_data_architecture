@@ -20,12 +20,12 @@ class ShellEncoder(nn.Module):
         self.embedding_dim = embedding_dim
 
         # Build conv layers
-        channels = [2, 16, 32, 64, embedding_dim]
+        channels = [2, 16, 32, 64]
         self.conv_layers = nn.ModuleList()
 
         for i in range(num_conv_layers):
-            in_ch = channels[i] if i < len(channels) - 1 else channels[-2]
-            out_ch = channels[i + 1] if i + 1 < len(channels) else channels[-1]
+            in_ch = channels[min(i, len(channels) - 1)]
+            out_ch = channels[min(i + 1, len(channels) - 1)]
 
             self.conv_layers.append(
                 nn.Sequential(
@@ -34,6 +34,9 @@ class ShellEncoder(nn.Module):
                     nn.ReLU(inplace=True),
                 )
             )
+
+        # Final projection to embedding_dim
+        self.final_proj = nn.Conv3d(channels[-1], embedding_dim, kernel_size=1)
 
         # Adaptive pooling to fixed size
         self.adaptive_pool = nn.AdaptiveAvgPool3d((1, 1, 1))
@@ -50,6 +53,9 @@ class ShellEncoder(nn.Module):
         # Assume input is already scattered to grid: [B, 2, H, W, D]
         for layer in self.conv_layers:
             x = layer(x)
+
+        # Project to embedding dimension
+        x = self.final_proj(x)  # [B, embedding_dim, H, W, D]
 
         # Pool to fixed size
         x = self.adaptive_pool(x)  # [B, embedding_dim, 1, 1, 1]

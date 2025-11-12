@@ -21,28 +21,48 @@ class FrequencyBandUNet(nn.Module):
         self.depth_size = depth_size
         channels = [1, base_channels, base_channels * 2, base_channels * 4]
 
+        # Determine number of pooling stages based on depth
+        # Need at least depth >= 2^num_pools
+        if depth_size >= 8:
+            self.num_pools = 3
+        elif depth_size >= 4:
+            self.num_pools = 2
+        elif depth_size >= 2:
+            self.num_pools = 1
+        else:
+            self.num_pools = 0
+
         # Encoder
         self.enc1 = self._make_encoder_block(channels[0], channels[1])
-        self.enc2 = self._make_encoder_block(channels[1], channels[2])
-        self.enc3 = self._make_encoder_block(channels[2], channels[3])
+        if self.num_pools >= 2:
+            self.enc2 = self._make_encoder_block(channels[1], channels[2])
+        if self.num_pools >= 3:
+            self.enc3 = self._make_encoder_block(channels[2], channels[3])
 
         self.pool = nn.MaxPool3d(kernel_size=2, stride=2)
 
         # Bottleneck
-        self.bottleneck = ComplexConv3d(channels[3], channels[3], kernel_size=3, padding=1)
+        bottleneck_ch = channels[min(self.num_pools + 1, len(channels) - 1)]
+        self.bottleneck = ComplexConv3d(bottleneck_ch, bottleneck_ch, kernel_size=3, padding=1)
 
         # Decoder
-        self.up3 = ComplexUpsample(channels[3], channels[3], kernel_size=2, stride=2)
-        self.dec3 = self._make_decoder_block(channels[3] * 2, channels[2])
+        if self.num_pools >= 3:
+            self.up3 = ComplexUpsample(channels[3], channels[3], kernel_size=2, stride=2)
+            self.dec3 = self._make_decoder_block(channels[3] * 2, channels[2])
 
-        self.up2 = ComplexUpsample(channels[2], channels[2], kernel_size=2, stride=2)
-        self.dec2 = self._make_decoder_block(channels[2] * 2, channels[1])
+        if self.num_pools >= 2:
+            up2_in = channels[2] if self.num_pools >= 3 else channels[2]
+            self.up2 = ComplexUpsample(up2_in, channels[2], kernel_size=2, stride=2)
+            self.dec2 = self._make_decoder_block(channels[2] * 2, channels[1])
 
-        self.up1 = ComplexUpsample(channels[1], channels[1], kernel_size=2, stride=2)
-        self.dec1 = self._make_decoder_block(channels[1] * 2, channels[0])
+        if self.num_pools >= 1:
+            up1_in = channels[1]
+            self.up1 = ComplexUpsample(up1_in, channels[1], kernel_size=2, stride=2)
+            self.dec1 = self._make_decoder_block(channels[1] * 2, channels[0])
 
         # Final output
-        self.output = ComplexConv3d(channels[0], 1, kernel_size=1)
+        final_ch = channels[0] if self.num_pools >= 1 else channels[1]
+        self.output = ComplexConv3d(final_ch, 1, kernel_size=1)
 
     def _make_encoder_block(self, in_ch: int, out_ch: int):
         """Create encoder block with two convolutions."""
@@ -78,29 +98,53 @@ class FrequencyBandUNet(nn.Module):
         """
         # Encoder with skip connections
         enc1_out = self.enc1(x)  # [B, C1, H, W, D, 2]
+
+        if self.num_pools == 0:
+            # No pooling - just bottleneck and output
+            bottleneck_out = self.bottleneck(enc1_out)
+            output = self.output(bottleneck_out)
+            return output
+
         enc1_pooled = self._pool_complex(enc1_out)
 
-        enc2_out = self.enc2(enc1_pooled)  # [B, C2, H/2, W/2, D/2, 2]
-        enc2_pooled = self._pool_complex(enc2_out)
+        if self.num_pools >= 2:
+            enc2_out = self.enc2(enc1_pooled)  # [B, C2, H/2, W/2, D/2, 2]
+            enc2_pooled = self._pool_complex(enc2_out)
+        else:
+            enc2_out = None
+            enc2_pooled = enc1_pooled
 
-        enc3_out = self.enc3(enc2_pooled)  # [B, C3, H/4, W/4, D/4, 2]
-        enc3_pooled = self._pool_complex(enc3_out)
+        if self.num_pools >= 3:
+            enc3_out = self.enc3(enc2_pooled)  # [B, C3, H/4, W/4, D/4, 2]
+            enc3_pooled = self._pool_complex(enc3_out)
+        else:
+            enc3_out = None
+            enc3_pooled = enc2_pooled
 
         # Bottleneck
-        bottleneck_out = self.bottleneck(enc3_pooled)  # [B, C3, H/8, W/8, D/8, 2]
+        bottleneck_out = self.bottleneck(enc3_pooled)
 
         # Decoder with skip connections
-        up3 = self.up3(bottleneck_out)
-        dec3_in = torch.cat([up3, enc3_out], dim=1)  # Skip connection
-        dec3_out = self.dec3(dec3_in)
+        if self.num_pools >= 3:
+            up3 = self.up3(bottleneck_out)
+            dec3_in = torch.cat([up3, enc3_out], dim=1)
+            dec3_out = self.dec3(dec3_in)
+        else:
+            dec3_out = bottleneck_out
 
-        up2 = self.up2(dec3_out)
-        dec2_in = torch.cat([up2, enc2_out], dim=1)
-        dec2_out = self.dec2(dec2_in)
+        if self.num_pools >= 2:
+            up2 = self.up2(dec3_out)
+            dec2_in = torch.cat([up2, enc2_out], dim=1)
+            dec2_out = self.dec2(dec2_in)
+        else:
+            dec2_out = dec3_out
 
-        up1 = self.up1(dec2_out)
-        dec1_in = torch.cat([up1, enc1_out], dim=1)
-        dec1_out = self.dec1(dec1_in)
+        if self.num_pools >= 1:
+            up1 = self.up1(dec2_out)
+            dec1_in = torch.cat([up1, enc1_out], dim=1)
+            dec1_out = self.dec1(dec1_in)
+        else:
+            dec1_out = dec2_out
 
         # Final output
         output = self.output(dec1_out)
