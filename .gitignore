@@ -43,6 +43,7 @@ logs/
 checkpoints/
 *.pth
 *.pt
+*.log
 
 # Data (but not src/data code!)
 /data/
