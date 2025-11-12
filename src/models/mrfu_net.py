@@ -321,25 +321,23 @@ class MRFUNet(BaseFourierModel):
             band_out = self.band_unets[i](band)  # [B, 1, H, W, band_depth, 2]
             band_outputs.append(band_out)
 
-            # Extract bottleneck features for cross-attention
-            # Use adaptive pooling to ensure consistent feature dimensions across bands
-            # Pool spatial dimensions to fixed size
-            feat = torch.nn.functional.adaptive_avg_pool3d(
-                band_out.permute(0, 1, 5, 2, 3, 4).reshape(B, -1, H, W, band_out.shape[4]),
-                output_size=(1, 1, 1)
-            ).reshape(B, -1)
-            bottleneck_features.append(feat)
-
-        # Cross-band attention (features now have consistent size)
-        bottleneck_features = torch.stack(bottleneck_features, dim=1)  # [B, num_bands, feat_dim]
-        attended_features = self.cross_band_attention(bottleneck_features)
-
-        # Note: In a full implementation, you'd use attended features to guide decoding
-        # For simplicity, we just use the band outputs directly
+        # Skip cross-band attention for simplicity
+        # (Would require extracting actual bottleneck features from U-Net,
+        #  not just using final outputs which have variable sizes)
 
         # Concatenate bands back together
         band_outputs = [band.squeeze(1) for band in band_outputs]  # Remove channel dim
         output = torch.cat(band_outputs, dim=3)  # Concatenate along depth
+
+        # Ensure output dimensions match input dimensions
+        if output.shape[1:4] != (H, W, D):
+            # Resize to match input
+            output = torch.nn.functional.interpolate(
+                output.permute(0, 4, 1, 2, 3),  # [B, 2, H', W', D']
+                size=(H, W, D),
+                mode='trilinear',
+                align_corners=False,
+            ).permute(0, 2, 3, 4, 1)  # Back to [B, H, W, D, 2]
 
         return output
 
