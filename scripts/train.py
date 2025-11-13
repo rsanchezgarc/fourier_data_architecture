@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader, random_split
 from torch.optim import Adam, AdamW
 from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR
 import time
+from tqdm import tqdm
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -199,7 +200,10 @@ def train_epoch(model, dataloader, optimizer, device, loss_type):
     model.train()
     metrics_tracker = MetricsTracker()
 
-    for batch_idx, (noisy, clean) in enumerate(dataloader):
+    # Progress bar for training
+    pbar = tqdm(dataloader, desc='Training', leave=False, ncols=100)
+
+    for noisy, clean in pbar:
         noisy = noisy.to(device)
         clean = clean.to(device)
 
@@ -217,8 +221,8 @@ def train_epoch(model, dataloader, optimizer, device, loss_type):
         # Track metrics
         metrics_tracker.update({'loss': loss.item()})
 
-        if batch_idx % 10 == 0:
-            print(f"  Batch {batch_idx}/{len(dataloader)}, Loss: {loss.item():.6f}")
+        # Update progress bar
+        pbar.set_postfix({'loss': f"{loss.item():.4f}"})
 
     return metrics_tracker.get_average()
 
@@ -228,8 +232,11 @@ def validate(model, dataloader, device, loss_type):
     model.eval()
     metrics_tracker = MetricsTracker()
 
+    # Progress bar for validation
+    pbar = tqdm(dataloader, desc='Validation', leave=False, ncols=100)
+
     with torch.no_grad():
-        for noisy, clean in dataloader:
+        for noisy, clean in pbar:
             noisy = noisy.to(device)
             clean = clean.to(device)
 
@@ -245,6 +252,9 @@ def validate(model, dataloader, device, loss_type):
                 metrics_tracker.update(detailed_metrics)
 
             metrics_tracker.update({'loss': loss.item()})
+
+            # Update progress bar
+            pbar.set_postfix({'val_loss': f"{loss.item():.4f}"})
 
     return metrics_tracker.get_average()
 
@@ -321,33 +331,23 @@ def main():
     train_history = []
     val_history = []
 
+    print("=" * 80)
     print("Starting training...")
-    print()
+    print("=" * 80)
 
+    # Main epoch loop with progress bar
     for epoch in range(1, args.epochs + 1):
-        print(f"Epoch {epoch}/{args.epochs}")
-        print("-" * 80)
-
         # Train
         start_time = time.time()
         train_metrics = train_epoch(model, train_loader, optimizer, args.device, args.loss_type)
         epoch_time = time.time() - start_time
 
-        print(f"Training metrics:")
-        print(f"  Loss: {train_metrics['loss']:.6f}")
-        print(f"  Time: {epoch_time:.2f}s")
-
         train_history.append(train_metrics)
 
         # Validate
+        val_str = ""
         if epoch % args.eval_every == 0:
-            print("Validating...")
             val_metrics = validate(model, val_loader, args.device, args.loss_type)
-
-            print(f"Validation metrics:")
-            for key, value in val_metrics.items():
-                print(f"  {key}: {value:.6f}")
-
             val_history.append(val_metrics)
 
             # Update scheduler
@@ -358,6 +358,7 @@ def main():
                     scheduler.step()
 
             # Save best model
+            best_marker = ""
             if val_metrics['loss'] < best_val_loss:
                 best_val_loss = val_metrics['loss']
                 torch.save({
@@ -367,7 +368,13 @@ def main():
                     'val_loss': best_val_loss,
                     'config': vars(args),
                 }, output_dir / 'best_model.pth')
-                print(f"  → Saved best model (val_loss: {best_val_loss:.6f})")
+                best_marker = " ★"
+
+            # Format validation string with key metrics
+            val_str = f" - val_loss: {val_metrics['loss']:.4f}"
+            if 'psnr' in val_metrics:
+                val_str += f" - val_psnr: {val_metrics['psnr']:.2f}dB"
+            val_str += best_marker
 
         # Save checkpoint
         if epoch % args.save_every == 0:
@@ -378,7 +385,11 @@ def main():
                 'config': vars(args),
             }, output_dir / f'checkpoint_epoch{epoch}.pth')
 
-        print()
+        # Lightning-style compact logging
+        lr = optimizer.param_groups[0]['lr']
+        print(f"Epoch {epoch:3d}/{args.epochs} │ "
+              f"loss: {train_metrics['loss']:.4f}{val_str} │ "
+              f"lr: {lr:.2e} │ {epoch_time:.1f}s")
 
     # Save final model and training history
     torch.save({
@@ -395,8 +406,7 @@ def main():
         }, f, indent=2)
 
     print("=" * 80)
-    print("Training completed!")
-    print(f"Best validation loss: {best_val_loss:.6f}")
+    print(f"Training completed! Best val_loss: {best_val_loss:.4f}")
     print(f"Models saved to: {output_dir}")
     print("=" * 80)
 
