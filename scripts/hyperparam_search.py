@@ -97,9 +97,9 @@ def suggest_hyperparameters(trial: optuna.Trial, model_name: str, volume_size: i
     params = {
         'lr': trial.suggest_float('lr', 1e-5, 1e-2, log=True),
         'batch_size': trial.suggest_categorical('batch_size', [2, 4, 8]),
-        'optimizer': trial.suggest_categorical('optimizer', ['adam', 'adamw']),
+        'optimizer': 'adamw',  # Fixed
         'scheduler': trial.suggest_categorical('scheduler', ['plateau', 'cosine', 'none']),
-        'loss_type': trial.suggest_categorical('loss_type', ['fourier', 'hybrid']),
+        'loss_type': 'hybrid',  # Fixed
         'hidden_channels': trial.suggest_categorical('hidden_channels', [16, 32, 64]),
     }
 
@@ -358,11 +358,17 @@ def optimize_model(model_name, train_dataset, val_dataset, args, output_dir):
     )
 
     # Print results
-    print(f"\n{model_name.upper()} - Best trial:")
-    print(f"  Value (val_loss): {study.best_trial.value:.6f}")
-    print(f"  Params:")
-    for key, value in study.best_trial.params.items():
-        print(f"    {key}: {value}")
+    print(f"\n{'='*60}")
+    print(f"{model_name.upper()} - Best Trial Results")
+    print(f"{'='*60}")
+    print(f"  Validation Loss: {study.best_trial.value:.6f}")
+    print(f"  Trial Number: {study.best_trial.number}")
+    print(f"\n  Best Hyperparameters:")
+    for key, value in sorted(study.best_trial.params.items()):
+        if isinstance(value, float):
+            print(f"    {key:20s}: {value:.6e}" if value < 0.01 else f"    {key:20s}: {value:.4f}")
+        else:
+            print(f"    {key:20s}: {value}")
 
     # Save study results
     model_output_dir = output_dir / model_name
@@ -410,7 +416,9 @@ def optimize_model(model_name, train_dataset, val_dataset, args, output_dir):
         print("  Install plotly for visualization: pip install plotly")
 
     # Train final model with best params
-    print(f"\nTraining final {model_name} model with best hyperparameters...")
+    print(f"\n{'─'*60}")
+    print(f"Training final {model_name} model with best hyperparameters...")
+    print(f"  Epochs: {args.epochs * 3} (3x search epochs)")
     best_params = study.best_trial.params
 
     # Create final model
@@ -447,8 +455,9 @@ def optimize_model(model_name, train_dataset, val_dataset, args, output_dir):
         'val_loss': final_val_loss,
     }, model_output_dir / 'best_model.pth')
 
-    print(f"  Final model saved with val_loss: {final_val_loss:.6f}")
-    print()
+    print(f"  ✓ Final model saved: {model_output_dir / 'best_model.pth'}")
+    print(f"  ✓ Final val_loss: {final_val_loss:.6f}")
+    print(f"{'─'*60}\n")
 
     return study.best_trial.value, study.best_trial.params
 
@@ -531,16 +540,55 @@ def main():
     with open(output_dir / 'summary.json', 'w') as f:
         json.dump(results, f, indent=2)
 
-    # Print final summary
-    print("=" * 80)
-    print("OPTIMIZATION COMPLETE")
-    print("=" * 80)
-    print("\nBest validation loss per model:")
-    for model_name, result in sorted(results.items(), key=lambda x: x[1]['best_val_loss']):
-        print(f"  {model_name:12s}: {result['best_val_loss']:.6f}")
-    print()
-    print(f"All results saved to: {output_dir}")
-    print("=" * 80)
+    # Print final summary table
+    print("\n" + "=" * 100)
+    print("OPTIMIZATION COMPLETE - SUMMARY")
+    print("=" * 100)
+
+    if results:
+        # Sort by best validation loss
+        sorted_results = sorted(results.items(), key=lambda x: x[1]['best_val_loss'])
+
+        # Print header
+        print(f"\n{'Rank':<6} {'Model':<12} {'Val Loss':<12} {'Learning Rate':<14} {'Batch Size':<12} {'Hidden Ch':<12}")
+        print("-" * 100)
+
+        # Print each model
+        for rank, (model_name, result) in enumerate(sorted_results, 1):
+            val_loss = result['best_val_loss']
+            params = result['best_params']
+            lr = params.get('lr', 'N/A')
+            batch_size = params.get('batch_size', 'N/A')
+            hidden_ch = params.get('hidden_channels', 'N/A')
+
+            # Format learning rate
+            if isinstance(lr, float):
+                lr_str = f"{lr:.2e}"
+            else:
+                lr_str = str(lr)
+
+            marker = "★" if rank == 1 else " "
+            print(f"{rank:<6} {model_name:<12} {val_loss:<12.6f} {lr_str:<14} {batch_size!s:<12} {hidden_ch!s:<12} {marker}")
+
+        print("-" * 100)
+
+        # Print best model details
+        best_model, best_result = sorted_results[0]
+        print(f"\n★ BEST MODEL: {best_model.upper()}")
+        print(f"  Val Loss: {best_result['best_val_loss']:.6f}")
+        print(f"  Best hyperparameters:")
+        for key, value in sorted(best_result['best_params'].items()):
+            if isinstance(value, float):
+                print(f"    {key:20s}: {value:.6e}" if value < 0.01 else f"    {key:20s}: {value:.4f}")
+            else:
+                print(f"    {key:20s}: {value}")
+
+        print(f"\n  Trained model saved: {output_dir}/{best_model}/best_model.pth")
+    else:
+        print("\nNo models were successfully optimized.")
+
+    print(f"\nAll results saved to: {output_dir}")
+    print("=" * 100)
 
 
 if __name__ == '__main__':
