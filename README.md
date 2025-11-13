@@ -46,6 +46,9 @@ BATCH_SIZE = 4               # Batch size (increase if you have more GPU memory)
 HIDDEN_CHANNELS = 32         # Hidden channels (16/32/64)
 # =================================
 
+import torch
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
 !python scripts/train.py \
     --model {MODEL} \
     --synthetic \
@@ -56,7 +59,7 @@ HIDDEN_CHANNELS = 32         # Hidden channels (16/32/64)
     --epochs {EPOCHS} \
     --lr 1e-3 \
     --loss-type hybrid \
-    --device cuda
+    --device {device}
 ```
 
 ### Cell 3: Automatic Hyperparameter Optimization (All Models)
@@ -71,6 +74,8 @@ VOLUME_SIZE = 64             # Volume size
 ENABLE_PRUNING = True        # Prune unpromising trials early
 # =================================
 
+import torch
+device = "cuda" if torch.cuda.is_available() else "cpu"
 models_arg = " ".join(MODELS_TO_OPTIMIZE)
 pruning_flag = "--pruning" if ENABLE_PRUNING else ""
 
@@ -82,7 +87,7 @@ pruning_flag = "--pruning" if ENABLE_PRUNING else ""
     --n-trials {TRIALS_PER_MODEL} \
     --epochs {SEARCH_EPOCHS} \
     {pruning_flag} \
-    --device cuda
+    --device {device}
 
 # Note: Best models are trained for 3x epochs and saved automatically
 ```
@@ -148,6 +153,10 @@ from src.metrics import compute_all_metrics
 from src.models import CVResNet, FNO3D, FSCNet, MRFUNet, RADNet, FrequencyGroupedTransformer
 import pandas as pd
 
+# Device detection
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f"Using device: {device}")
+
 MODELS = {
     'cvresnet': CVResNet,
     'fno3d': FNO3D,
@@ -157,22 +166,29 @@ MODELS = {
     'fgt': FrequencyGroupedTransformer,
 }
 
-# Generate test dataset
-test_dataset = SyntheticFourierDataset(
-    num_samples=50,
-    volume_size=64,
-    noise_type='gaussian',
-    noise_params={'noise_level': 0.1},
-    augmentation=False
-)
-
-# Find latest optuna study
+# Find latest optuna study to get volume_size from config
 optuna_dirs = sorted(Path("optuna_studies").glob("optuna_*"))
 if not optuna_dirs:
     print("No optimization studies found. Run Cell 3 first.")
 else:
     latest_study = optuna_dirs[-1]
-    print(f"Testing models from: {latest_study}\n")
+
+    # Load study config to get volume_size
+    with open(latest_study / 'config.json') as f:
+        study_config = json.load(f)
+        volume_size = study_config['volume_size']
+
+    print(f"Testing models from: {latest_study}")
+    print(f"Volume size: {volume_size}\n")
+
+    # Generate test dataset with same volume size as training
+    test_dataset = SyntheticFourierDataset(
+        num_samples=50,
+        volume_size=volume_size,
+        noise_type='gaussian',
+        noise_params={'noise_level': 0.1},
+        augmentation=False
+    )
 
     results = []
     for model_name in MODELS.keys():
@@ -189,7 +205,6 @@ else:
             params = data['best_params']
 
         # Create model with best params
-        volume_size = 64
         config = {
             'input_shape': (volume_size, volume_size, volume_size // 2 + 1),
             'hidden_channels': params['hidden_channels'],
@@ -218,16 +233,16 @@ else:
         model = MODELS[model_name](**config)
 
         # Load trained weights
-        checkpoint = torch.load(checkpoint_path, map_location='cuda')
+        checkpoint = torch.load(checkpoint_path, map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
-        model = model.cuda().eval()
+        model = model.to(device).eval()
 
         # Evaluate
         all_metrics = []
         with torch.no_grad():
             for noisy, clean in test_dataset:
-                noisy = noisy.unsqueeze(0).cuda()
-                clean = clean.unsqueeze(0).cuda()
+                noisy = noisy.unsqueeze(0).to(device)
+                clean = clean.unsqueeze(0).to(device)
                 pred = model(noisy)
                 metrics = compute_all_metrics(pred, clean, compute_ssim=True)
                 all_metrics.append(metrics)
@@ -248,12 +263,13 @@ else:
         print(f"✓ {model_name}: PSNR = {avg_metrics['psnr']:.2f} dB")
 
     # Display results
-    df = pd.DataFrame(results).sort_values('PSNR (dB)', ascending=False)
-    print("\n" + "="*70)
-    print("📊 TRAINED MODEL PERFORMANCE ON TEST SET")
-    print("="*70)
-    print(df.to_string(index=False))
-    print("="*70)
+    if results:
+        df = pd.DataFrame(results).sort_values('PSNR (dB)', ascending=False)
+        print("\n" + "="*70)
+        print("📊 TRAINED MODEL PERFORMANCE ON TEST SET")
+        print("="*70)
+        print(df.to_string(index=False))
+        print("="*70)
 ```
 
 ### Cell 6: Download Best Model
@@ -356,12 +372,13 @@ TRIALS = 50
 
 ## 📊 Expected Results
 
-After proper training (100+ epochs), expect:
-- **PSNR**: 25-35 dB (higher is better)
+After proper training (100+ epochs on synthetic data with Gaussian noise σ=0.1), expect:
+- **PSNR**: 25-35 dB (higher is better) - varies by architecture and noise level
 - **SSIM**: 0.85-0.95 (1.0 is perfect)
 - **Training time**: ~0.1-0.5s per batch on modern GPU
+- **Best architectures**: FNO-3D and RAD-Net typically perform best for Fourier denoising
 
-Untrained models show ~0 dB PSNR (random weights).
+**Note**: Untrained models show ~0 dB PSNR (random weights). Results depend on noise type, noise level, and dataset characteristics.
 
 ## 🏆 Hyperparameter Optimization
 
