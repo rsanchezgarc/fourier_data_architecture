@@ -135,21 +135,125 @@ else:
     print("No optimization studies found. Run Cell 3 first.")
 ```
 
-### Cell 5: Benchmark All Models
+### Cell 5: Test Best Models on New Data
 
 ```python
-!python scripts/benchmark.py \
-    --models cvresnet fno3d fscnet mrfunet radnet fgt \
-    --synthetic \
-    --num-samples 100 \
-    --volume-size 64 \
-    --device cuda
-
-# View results
+# Evaluate the optimized models from Cell 3 on fresh test data
+import torch
+import json
+import numpy as np
+from pathlib import Path
+from src.data import SyntheticFourierDataset
+from src.metrics import compute_all_metrics
+from src.models import CVResNet, FNO3D, FSCNet, MRFUNet, RADNet, FrequencyGroupedTransformer
 import pandas as pd
-results = pd.read_csv("benchmark_results/benchmark_results.csv")
-print("\n📊 Benchmark Results:")
-print(results.to_string(index=False))
+
+MODELS = {
+    'cvresnet': CVResNet,
+    'fno3d': FNO3D,
+    'fscnet': FSCNet,
+    'mrfunet': MRFUNet,
+    'radnet': RADNet,
+    'fgt': FrequencyGroupedTransformer,
+}
+
+# Generate test dataset
+test_dataset = SyntheticFourierDataset(
+    num_samples=50,
+    volume_size=64,
+    noise_type='gaussian',
+    noise_params={'noise_level': 0.1},
+    augmentation=False
+)
+
+# Find latest optuna study
+optuna_dirs = sorted(Path("optuna_studies").glob("optuna_*"))
+if not optuna_dirs:
+    print("No optimization studies found. Run Cell 3 first.")
+else:
+    latest_study = optuna_dirs[-1]
+    print(f"Testing models from: {latest_study}\n")
+
+    results = []
+    for model_name in MODELS.keys():
+        model_dir = latest_study / model_name
+        checkpoint_path = model_dir / "best_model.pth"
+
+        if not checkpoint_path.exists():
+            print(f"⚠ {model_name}: No trained model found, skipping")
+            continue
+
+        # Load best params
+        with open(model_dir / 'best_params.json') as f:
+            data = json.load(f)
+            params = data['best_params']
+
+        # Create model with best params
+        volume_size = 64
+        config = {
+            'input_shape': (volume_size, volume_size, volume_size // 2 + 1),
+            'hidden_channels': params['hidden_channels'],
+        }
+
+        # Add model-specific params (same logic as hyperparam_search.py)
+        if model_name == 'cvresnet':
+            config['num_blocks'] = params['num_blocks']
+        elif model_name == 'fno3d':
+            config['num_layers'] = params['num_layers']
+            config['modes_x'] = params['modes_x']
+            config['modes_y'] = params['modes_y']
+            config['modes_z'] = params['modes_z']
+        elif model_name == 'fscnet':
+            config['num_shells'] = params['num_shells']
+            config['embedding_dim'] = params['embedding_dim']
+        elif model_name == 'mrfunet':
+            config['num_bands'] = params['num_bands']
+        elif model_name == 'radnet':
+            config['num_radial_bins'] = params['num_radial_bins']
+            config['num_angular_modes'] = params['num_angular_modes']
+        elif model_name == 'fgt':
+            config['num_bands'] = params['num_bands']
+            config['tokens_per_band'] = params['tokens_per_band']
+
+        model = MODELS[model_name](**config)
+
+        # Load trained weights
+        checkpoint = torch.load(checkpoint_path, map_location='cuda')
+        model.load_state_dict(checkpoint['model_state_dict'])
+        model = model.cuda().eval()
+
+        # Evaluate
+        all_metrics = []
+        with torch.no_grad():
+            for noisy, clean in test_dataset:
+                noisy = noisy.unsqueeze(0).cuda()
+                clean = clean.unsqueeze(0).cuda()
+                pred = model(noisy)
+                metrics = compute_all_metrics(pred, clean, compute_ssim=True)
+                all_metrics.append(metrics)
+
+        # Average metrics
+        avg_metrics = {}
+        for key in all_metrics[0].keys():
+            avg_metrics[key] = np.mean([m[key] for m in all_metrics])
+
+        results.append({
+            'Model': model_name,
+            'PSNR (dB)': avg_metrics['psnr'],
+            'SSIM': avg_metrics.get('ssim', 0),
+            'MSE (Fourier)': avg_metrics['mse_fourier'],
+            'Phase Error': avg_metrics['phase_error'],
+        })
+
+        print(f"✓ {model_name}: PSNR = {avg_metrics['psnr']:.2f} dB")
+
+    # Display results
+    df = pd.DataFrame(results).sort_values('PSNR (dB)', ascending=False)
+    print("\n" + "="*70)
+    print("📊 TRAINED MODEL PERFORMANCE ON TEST SET")
+    print("="*70)
+    print(df.to_string(index=False))
+    print("="*70)
 ```
 
 ### Cell 6: Download Best Model
