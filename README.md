@@ -111,31 +111,38 @@ if optuna_dirs:
         with open(summary_path) as f:
             results = json.load(f)
 
-        # Create comparison table
-        data = []
-        for model, result in results.items():
-            data.append({
-                'Model': model,
-                'Val Loss': result['best_val_loss'],
-                'Learning Rate': result['best_params'].get('lr', 'N/A'),
-                'Batch Size': result['best_params'].get('batch_size', 'N/A'),
-                'Hidden Channels': result['best_params'].get('hidden_channels', 'N/A'),
-            })
+        if results:  # Check if results dict is not empty
+            # Create comparison table
+            data = []
+            for model, result in results.items():
+                data.append({
+                    'Model': model,
+                    'Val Loss': result['best_val_loss'],
+                    'Learning Rate': result['best_params'].get('lr', 'N/A'),
+                    'Batch Size': result['best_params'].get('batch_size', 'N/A'),
+                    'Hidden Channels': result['best_params'].get('hidden_channels', 'N/A'),
+                })
 
-        df = pd.DataFrame(data).sort_values('Val Loss')
-        print("🏆 Model Comparison:")
-        print(df.to_string(index=False))
+            df = pd.DataFrame(data).sort_values('Val Loss')
+            print("🏆 Model Comparison:")
+            print(df.to_string(index=False))
 
-        # Best model details
-        best_model = df.iloc[0]['Model']
-        print(f"\n⭐ Best Model: {best_model.upper()}")
-        print(f"   Location: {latest_study}/{best_model}/best_model.pth")
+            # Best model details
+            best_model = df.iloc[0]['Model']
+            print(f"\n⭐ Best Model: {best_model.upper()}")
+            print(f"   Location: {latest_study}/{best_model}/best_model.pth")
 
-        # Show visualization links
-        print(f"\n📈 Visualizations for {best_model}:")
-        viz_dir = latest_study / best_model
-        for viz_file in viz_dir.glob("*.html"):
-            print(f"   - {viz_file.name}")
+            # Show visualization links
+            print(f"\n📈 Visualizations for {best_model}:")
+            viz_dir = latest_study / best_model
+            for viz_file in viz_dir.glob("*.html"):
+                print(f"   - {viz_file.name}")
+        else:
+            print("⚠️ No optimization results yet. The study may still be running or failed.")
+            print("   Check the optimization output for errors.")
+    else:
+        print("⚠️ No summary.json found. The study may still be running.")
+        print("   Wait for the optimization to complete (Cell 3).")
 else:
     print("No optimization studies found. Run Cell 3 first.")
 ```
