@@ -192,21 +192,24 @@ def train_and_evaluate(model, train_loader, val_loader, params, device, epochs, 
     """Train model and return validation loss."""
     model = model.to(device)
 
-    # Create optimizer
-    if params['optimizer'] == 'adam':
+    # Create optimizer (use fixed value if not in params)
+    optimizer_type = params.get('optimizer', 'adamw')
+    if optimizer_type == 'adam':
         optimizer = Adam(model.parameters(), lr=params['lr'])
     else:
         optimizer = AdamW(model.parameters(), lr=params['lr'])
 
     # Create scheduler
-    if params['scheduler'] == 'plateau':
+    scheduler_type = params.get('scheduler', 'plateau')
+    if scheduler_type == 'plateau':
         scheduler = ReduceLROnPlateau(optimizer, mode='min', patience=3, factor=0.5)
-    elif params['scheduler'] == 'cosine':
+    elif scheduler_type == 'cosine':
         scheduler = CosineAnnealingLR(optimizer, T_max=epochs)
     else:
         scheduler = None
 
     best_val_loss = float('inf')
+    loss_type = params.get('loss_type', 'hybrid')
 
     for epoch in range(epochs):
         # Train
@@ -217,7 +220,7 @@ def train_and_evaluate(model, train_loader, val_loader, params, device, epochs, 
 
             optimizer.zero_grad()
             prediction = model(noisy)
-            loss = compute_loss(prediction, clean, params['loss_type'])
+            loss = compute_loss(prediction, clean, loss_type)
             loss.backward()
             optimizer.step()
 
@@ -229,7 +232,7 @@ def train_and_evaluate(model, train_loader, val_loader, params, device, epochs, 
                 noisy = noisy.to(device)
                 clean = clean.to(device)
                 prediction = model(noisy)
-                loss = compute_loss(prediction, clean, params['loss_type'])
+                loss = compute_loss(prediction, clean, loss_type)
                 val_loss += loss.item()
 
         val_loss /= len(val_loader)
@@ -374,11 +377,15 @@ def optimize_model(model_name, train_dataset, val_dataset, args, output_dir):
     model_output_dir = output_dir / model_name
     model_output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Save best params
+    # Save best params (include fixed values)
+    best_params_full = dict(study.best_trial.params)
+    best_params_full['optimizer'] = 'adamw'  # Add fixed value
+    best_params_full['loss_type'] = 'hybrid'  # Add fixed value
+
     with open(model_output_dir / 'best_params.json', 'w') as f:
         json.dump({
             'best_value': study.best_trial.value,
-            'best_params': study.best_trial.params,
+            'best_params': best_params_full,
             'n_trials': len(study.trials),
         }, f, indent=2)
 
@@ -419,7 +426,9 @@ def optimize_model(model_name, train_dataset, val_dataset, args, output_dir):
     print(f"\n{'─'*60}")
     print(f"Training final {model_name} model with best hyperparameters...")
     print(f"  Epochs: {args.epochs * 3} (3x search epochs)")
-    best_params = study.best_trial.params
+
+    # Use the full params (with fixed values) for final training
+    best_params = best_params_full
 
     # Create final model
     model = create_model(model_name, best_params, args.volume_size)
@@ -459,7 +468,7 @@ def optimize_model(model_name, train_dataset, val_dataset, args, output_dir):
     print(f"  ✓ Final val_loss: {final_val_loss:.6f}")
     print(f"{'─'*60}\n")
 
-    return study.best_trial.value, study.best_trial.params
+    return study.best_trial.value, best_params_full
 
 
 def main():
