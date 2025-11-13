@@ -1,6 +1,6 @@
 """Data loading and preprocessing utilities."""
 
-from .dataset import FourierDenoisingDataset
+from .dataset import FourierDenoisingDataset, SyntheticFourierDataset
 from .noise_models import (
     add_gaussian_noise_fourier,
     add_poisson_noise_fourier,
@@ -14,6 +14,7 @@ from .volume_utils import (
 
 __all__ = [
     'FourierDenoisingDataset',
+    'SyntheticFourierDataset',
     'add_gaussian_noise_fourier',
     'add_poisson_noise_fourier',
     'add_mixed_noise_fourier',
